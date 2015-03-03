@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
-	_ "github.com/mattn/go-oci8" // Copyright © 2014-2015 Yasuhiro Matsumoto. Please review applicable license agreement. https://github.com/mattn/go-oci8
+	_ "github.com/mattn/go-oci8" // Copyright © 2014-2015 Yasuhiro Matsumoto. Governed by a separate license agreement. See https://github.com/mattn/go-oci8.
 	"io"
 	"io/ioutil"
 	"log"
@@ -25,8 +25,8 @@ const (
 )
 
 var (
-	mode                    int                         // Tekopia can run in four modes; mode is determined by prompting when the program runs
-	searchdir               string = "/Users/Annet/sqr" // Directory where custom SQRs reside
+	mode                    int                  // Tekopia can run in four modes; mode is determined by prompting when the program runs
+	searchdir               string = "/psft/sqr" // Directory where custom SQRs reside
 	tblmtch, fldmtch, cfrom string
 )
 
@@ -216,6 +216,20 @@ func prepDb(db *sql.DB) error {
 		return err
 	} else {
 		println(`Table UPGRADE_AUDIT created for analyzing overall impact`)
+	}
+
+	_, err = db.Exec("declare c int; begin select count(1) into c from dba_tables where table_name = 'UPGRADE_TOTALS'; if c = 1 then execute immediate 'drop table upgrade_totals'; end if; end;")
+	if err != nil {
+		return err
+	} else {
+		println(`Table UPGRADE_AUDIT dropped`)
+	}
+
+	_, err = db.Exec("create table upgrade_totals (change_type varchar2(40), pcode_object int, sql_object int, query_object int) tablespace psdefault storage (initial 50000 next 50000 maxextents unlimited pctincrease 0) pctfree 10 pctused 80")
+	if err != nil {
+		return err
+	} else {
+		println(`Table UPGRADE_TOTALS created for analyzing overall impact`)
 	}
 
 	return nil
@@ -1244,7 +1258,7 @@ func prtsummary(db *sql.DB) error {
 	println("Impact Analysis - Summary:")
 	file1.WriteString("\nImpact Analysis - Summary:\n")
 
-	stmt, err := db.Prepare("select count(distinct pcode_object) cntpcode, count(distinct sql_object) cntsql, count(distinct query_object) cntqry from upgrade_audit")
+	stmt, err := db.Prepare("select (select count(distinct pcode_object) from upgrade_audit where pcode_object is not null) cntpcode, (select count(distinct sql_object) from upgrade_audit where sql_object is not null) cntsql, (select count(distinct query_object) from upgrade_audit where query_object is not null) cntqry from dual")
 	if err != nil {
 		return err
 	}
@@ -1283,7 +1297,7 @@ func prtdetail1(db *sql.DB) error {
 	println("Impact Analysis - Detail:")
 	file1.WriteString("\nImpact Analysis - Detail:\n")
 
-	stmt, err := db.Prepare("select count(distinct query_object) cntprivqry from upgrade_audit where query_object like '%:%'")
+	stmt, err := db.Prepare("select count(distinct query_object) cntprivqry from upgrade_audit where query_object like '%:%' and query_object is not null")
 	if err != nil {
 		return err
 	}
@@ -1296,9 +1310,9 @@ func prtdetail1(db *sql.DB) error {
 	for rows.Next() {
 		var c1 int
 		rows.Scan(&c1)
-		println(c1, " Private Queries")
+		println(c1, " Private Queries are impacted by changes in the new software release.")
 		file1.WriteString(strconv.Itoa(c1))
-		file1.WriteString(" private queries are impacted by changes in the new software release.\n")
+		file1.WriteString(" Private Queries are impacted by changes in the new software release.\n")
 	}
 
 	return rows.Err()
@@ -1313,10 +1327,52 @@ func prtdetail2(db *sql.DB) error {
 
 	defer file1.Close()
 
+	_, err = db.Exec("merge into upgrade_totals a using (select change_type, count(distinct pcode_object) as pcode_object from upgrade_audit where pcode_object is not null group by change_type) b on (a.change_type = b.change_type) when matched then update set a.pcode_object = b.pcode_object when not matched then insert (a.change_type, a.pcode_object) values (b.change_type, b.pcode_object)")
+	if err != nil {
+		return err
+	} else {
+		println(`Analyzing impact on PeopleCode.`)
+	}
+
+	_, err = db.Exec("merge into upgrade_totals a using (select change_type, count(distinct sql_object) as sql_object from upgrade_audit where sql_object is not null group by change_type) b on (a.change_type = b.change_type) when matched then update set a.sql_object = b.sql_object when not matched then insert (a.change_type, a.sql_object) values (b.change_type, b.sql_object)")
+	if err != nil {
+		return err
+	} else {
+		println(`Analyzing impact on SQL.`)
+	}
+
+	_, err = db.Exec("merge into upgrade_totals a using (select change_type, count(distinct query_object) as query_object from upgrade_audit where query_object is not null group by change_type) b on (a.change_type = b.change_type) when matched then update set a.query_object = b.query_object when not matched then insert (a.change_type, a.query_object) values (b.change_type, b.query_object)")
+	if err != nil {
+		return err
+	} else {
+		println(`Analyzing impact on Queries.`)
+	}
+
+	_, err = db.Exec("update upgrade_totals set pcode_object = 0 where pcode_object is null")
+	if err != nil {
+		return err
+	} else {
+		println(`Completed PeopleCode impact analysis.`)
+	}
+
+	_, err = db.Exec("update upgrade_totals set sql_object = 0 where sql_object is null")
+	if err != nil {
+		return err
+	} else {
+		println(`Completed SQL impact analysis.`)
+	}
+
+	_, err = db.Exec("update upgrade_totals set query_object = 0 where query_object is null")
+	if err != nil {
+		return err
+	} else {
+		println(`Completed Query impact analysis.`)
+	}
+
 	println("Objects impacted by various type of changes:")
 	file1.WriteString("\nObjects impacted by various type of changes:\n")
 
-	stmt, err := db.Prepare("select change_type, count(distinct pcode_object) cntpcode, count(distinct sql_object) cntsql, count(distinct query_object) cntqry from upgrade_audit group by change_type")
+	stmt, err := db.Prepare("select change_type, pcode_object, sql_object, query_object from upgrade_totals")
 	if err != nil {
 		return err
 	}
@@ -1411,7 +1467,7 @@ func prtsqrs(db *sql.DB) error {
 	defer file1.Close()
 
 	println("SQR Impact Analysis - Summary: ")
-	file1.WriteString("\nSQR Impact Analysis - Summary: ")
+	file1.WriteString("\n\nSQR Impact Analysis - Summary: ")
 	println("Number of custom SQRs found: ")
 	file1.WriteString("\nNumber of custom SQRs found: ")
 	files, _ := ioutil.ReadDir(searchdir)
@@ -1425,7 +1481,7 @@ func prtsqrs(db *sql.DB) error {
 	println("SQR Impact Analysis - Detail: ")
 	file1.WriteString("\nSQR Impact Analysis - Detail: ")
 
-	stmt, err := db.Prepare("select change_type, count(distinct sqr_object) cntsqr from upgrade_audit group by change_type")
+	stmt, err := db.Prepare("select change_type, count(distinct sqr_object) cntsqr from upgrade_audit where sqr_object is not null group by change_type")
 	if err != nil {
 		return err
 	}
