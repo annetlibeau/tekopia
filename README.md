@@ -1,6 +1,6 @@
 Tekopia is a Go program that performs an analysis of Oracle database structure changes and their impact on customizations during a PeopleSoft upgrade.
 
-The program finds records and fields renamed in the new software release, records now views (and vice versa), field length changes, and obsolete records and fields. It searches custom SQRs, Queries, SQL and PeopleCode for references to such objects. The report provides a detail impact analysis, as well as a summary of the total number of custom SQR, PeopleCode, SQL and Query objects impacted by the various changes in the new software release.
+The program finds records and fields renamed in the new software release, records that are now views (and vice versa), field length changes, and obsolete records and fields. It searches custom SQRs, Queries, SQL and PeopleCode for references to such objects. The report provides a detail impact analysis, as well as a summary of the total number of custom SQR, PeopleCode, SQL and Query objects impacted by the various changes in the new software release.
 
 Tekopia requires an old release demo- and a new release upgraded database on the same PeopleTools version (unless a file compare can be used), as well as a database link from the newly upgraded- to the old version demo database.
 
